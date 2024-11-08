@@ -38,41 +38,10 @@ jobs:
     outputs:
       count: ${{ steps.update-roles.outputs.count }}
     steps:
-    - name: Remove Admin/Instructor Roles
-      run: |
-        roles=(
-          "admin"
-          "instructors"
-          "tas"
-          "tas-fall-2024"
-        )
-        for role in "${roles[@]}"; do
-          if gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /orgs/${{ github.repository_owner }}/teams/$role/memberships/${{ github.event.inputs.gitHubUsername }} > /dev/null 2>&1; then
-            echo "Removing ${{ github.event.inputs.gitHubUsername }} from $role..."
-            gh api --method DELETE -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /orgs/${{ github.repository_owner }}/teams/$role/memberships/${{ github.event.inputs.gitHubUsername }}
-          fi
-        done
-      env:
-        GITHUB_TOKEN: ${{ secrets.REPOSITORY_CONFIG_TOKEN }}
-        GH_TOKEN: ${{ secrets.REPOSITORY_CONFIG_TOKEN }}
-        OWNER: ${{ github.repository_owner }}
-    - name: Update Everyone Team Role
-      run: |
-        if ! gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /orgs/${{ github.repository_owner }}/teams/everyone/memberships/${{ github.event.inputs.gitHubUsername }} > /dev/null 2>&1; then
-          echo "Adding ${{ github.event.inputs.gitHubUsername }} to everyone team..."
-          gh api --method PUT -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /orgs/${{ github.repository_owner }}/teams/everyone/memberships/${{ github.event.inputs.gitHubUsername }} -f role='member'
-        else
-          echo "${{ github.event.inputs.gitHubUsername }} is already a member of the everyone team."
-        fi
-      env:
-        GITHUB_TOKEN: ${{ secrets.REPOSITORY_CONFIG_TOKEN }}
-        GH_TOKEN: ${{ secrets.REPOSITORY_CONFIG_TOKEN }}
-        OWNER: ${{ github.repository_owner }}
     - name: Update Team Roles
       id: update-roles
       run: |
         roles=(
-          "students"
           "students-fall-2024"
         )
         count=0
