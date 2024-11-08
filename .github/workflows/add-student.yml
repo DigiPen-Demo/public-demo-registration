@@ -1,0 +1,115 @@
+name: add-student
+
+on:
+  workflow_dispatch:
+    inputs:
+      gitHubUsername:
+        # see https://docs.github.com/en/free-pro-team@latest/actions/reference/specifications-for-github-hosted-runners#supported-runners-and-hardware-resources
+        description: '"GitHub username"'
+        required: true
+      name:
+        description: '"Name"'
+        required: true
+      email:
+        description: '"Email"'
+        required: true
+
+jobs:
+  validation:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check input name vs current user
+      run: |
+        if [[ "${{ github.event.inputs.gitHubUsername }}" == "${{ github.actor }}" ]]; then
+          echo "${{ github.actor }} is adding themselves."
+        elif gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /orgs/${{ github.repository_owner }}/teams/bots/memberships/${{ github.actor }} > /dev/null 2>&1; then
+          echo "${{ github.actor }} (member of bots) is adding roles to ${{ github.event.inputs.gitHubUsername }}."
+        else
+          echo "Error: ${{ github.actor }} is not authorized to add roles to ${{ github.event.inputs.gitHubUsername }}."
+          exit 1
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.REPOSITORY_CONFIG_TOKEN }}
+        GH_TOKEN: ${{ secrets.REPOSITORY_CONFIG_TOKEN }}
+
+  add-roles:
+    runs-on: ubuntu-latest
+    needs: validation
+    outputs:
+      count: ${{ steps.update-roles.outputs.count }}
+    steps:
+    - name: Remove Admin/Instructor Roles
+      run: |
+        roles=(
+          "admin"
+          "instructors"
+          "tas"
+          "tas-fall-2024"
+        )
+        for role in "${roles[@]}"; do
+          if gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /orgs/${{ github.repository_owner }}/teams/$role/memberships/${{ github.event.inputs.gitHubUsername }} > /dev/null 2>&1; then
+            echo "Removing ${{ github.event.inputs.gitHubUsername }} from $role..."
+            gh api --method DELETE -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /orgs/${{ github.repository_owner }}/teams/$role/memberships/${{ github.event.inputs.gitHubUsername }}
+          fi
+        done
+      env:
+        GITHUB_TOKEN: ${{ secrets.REPOSITORY_CONFIG_TOKEN }}
+        GH_TOKEN: ${{ secrets.REPOSITORY_CONFIG_TOKEN }}
+        OWNER: ${{ github.repository_owner }}
+    - name: Update Everyone Team Role
+      run: |
+        if ! gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /orgs/${{ github.repository_owner }}/teams/everyone/memberships/${{ github.event.inputs.gitHubUsername }} > /dev/null 2>&1; then
+          echo "Adding ${{ github.event.inputs.gitHubUsername }} to everyone team..."
+          gh api --method PUT -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /orgs/${{ github.repository_owner }}/teams/everyone/memberships/${{ github.event.inputs.gitHubUsername }} -f role='member'
+        else
+          echo "${{ github.event.inputs.gitHubUsername }} is already a member of the everyone team."
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.REPOSITORY_CONFIG_TOKEN }}
+        GH_TOKEN: ${{ secrets.REPOSITORY_CONFIG_TOKEN }}
+        OWNER: ${{ github.repository_owner }}
+    - name: Update Team Roles
+      id: update-roles
+      run: |
+        roles=(
+          "students"
+          "students-fall-2024"
+        )
+        count=0
+        for role in "${roles[@]}"; do
+          if ! gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /orgs/${{ github.repository_owner }}/teams/$role/memberships/${{ github.event.inputs.gitHubUsername }} > /dev/null 2>&1; then
+            echo "Adding ${{ github.event.inputs.gitHubUsername }} to $role..."
+            gh api --method PUT -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /orgs/${{ github.repository_owner }}/teams/$role/memberships/${{ github.event.inputs.gitHubUsername }} -f role='member'
+            count=$((count + 1))
+          fi
+        done
+        echo "count=$count" >> $GITHUB_OUTPUT
+        if [ "$count" -eq "0" ]; then
+          echo "Usser was already member of ${roles[@]} teams."
+          exit 0
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.REPOSITORY_CONFIG_TOKEN }}
+        GH_TOKEN: ${{ secrets.REPOSITORY_CONFIG_TOKEN }}
+        OWNER: ${{ github.repository_owner }}
+
+  log:
+    runs-on: ubuntu-latest
+    needs: add-roles
+    if: needs.add-roles.outputs.count != '0'
+    steps:
+    - name: Post to Issues
+      run: |
+        TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        gh api \
+          --method POST \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+            /repos/${{ github.repository_owner }}/admin-management/issues \
+          -f "title=add student: ${{ github.event.inputs.name }} (${{ github.event.inputs.email }}) - ${{ github.event.inputs.gitHubUsername }} to students, students-fall-2024" \
+          -f "body=${{ github.event.inputs.name }} (${{ github.event.inputs.email }}) - [${{ github.event.inputs.gitHubUsername }}](https://github.com/orgs/${{ github.repository_owner }}/people/${{ github.event.inputs.gitHubUsername }}) added to [students](https://github.com/orgs/${{ github.repository_owner }}/teams/students), [students-fall-2024](https://github.com/orgs/${{ github.repository_owner }}/teams/students-fall-2024) team - by [${{ github.actor }}](https://github.com/orgs/${{ github.repository_owner }}/people/${{ github.actor }}) on $TIMESTAMP" \
+          -f "labels[]=new student"
+      env:
+        GITHUB_TOKEN: ${{ secrets.REPOSITORY_CONFIG_TOKEN }}
+        GH_TOKEN: ${{ secrets.REPOSITORY_CONFIG_TOKEN }}
+        OWNER: ${{ github.repository_owner }}
